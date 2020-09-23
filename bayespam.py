@@ -27,7 +27,7 @@ class Counter():
 
 class Bayespam():
 
-    def __init__(self):
+    def _init_(self):
         self.regular_list = None
         self.spam_list = None
         self.vocab = {}
@@ -62,6 +62,19 @@ class Bayespam():
         except FileNotFoundError:
             print("Error: directory %s should contain a folder named 'spam'." % path)
             exit()
+    
+    # # removes punctuation, numerals and capital letters
+    def clean_token(self, s):
+        punctuations = '''!()-[]{};:'"\,<>./?@#$%^&*_~'''
+        newtoken = ""
+
+        for i in range(len(s)):
+            # # remove punctuation and numerals
+            if ((s[i] not in punctuations) and not s[i].isdigit()):
+                newtoken = newtoken + s[i]
+        
+        newtoken = newtoken.lower()
+        return newtoken
 
     def read_messages(self, message_type):
         """
@@ -92,18 +105,14 @@ class Bayespam():
                     # Loop through the tokens
                     for idx in range(len(split_line)):
                         token = split_line[idx]
-                        #print("token:", token)
-                        punctuations = '''!()-[]{};:'"\,<>./?@#$%^&*_~'''
-                        for idx in range(len(split_line)):
-                            token = split_line[idx]
-                            if (len(token)<4):
-                                    token = token.replace(token, "")
-                            for i in range(len(token)+1):
-                                if (token[i].isupper() or (token[i] not in punctuations) or token[i].isdigit()):
-                                    token = token.replace(token[i], "")
+                        # #print("token:", token) 
 
+                        # # # remove tokens that are less than 4 characters long
+                        if (len(token)<4):
+                            token = token.replace(token, "")
+                        
+                        token = self.clean_token(token)
 
-                        #TODO: punctuation, capitals, numericals, short words
                         if token in self.vocab.keys():
                             # If the token is already in the vocab, retrieve its counter
                             counter = self.vocab[token]
@@ -153,6 +162,10 @@ class Bayespam():
             f.close()
         except Exception as e:
             print("An error occurred while writing the vocab to a file: ", e)
+
+
+def apriori(sublist, totallist):
+    return len(sublist)/len(totallist)
 
 
 
