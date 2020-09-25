@@ -1,7 +1,14 @@
 import argparse
 import os
+from math import log
+import string
+from string import digits
+table = str.maketrans(dict.fromkeys(string.punctuation))
+table1 = str.maketrans("", "", digits)
 
 from enum import Enum
+
+tuning_var = 1
 
 class MessageType(Enum):
     REGULAR = 1,
@@ -27,7 +34,7 @@ class Counter():
 
 class Bayespam():
 
-    def _init_(self):
+    def __init__(self):
         self.regular_list = None
         self.spam_list = None
         self.vocab = {}
@@ -62,19 +69,14 @@ class Bayespam():
         except FileNotFoundError:
             print("Error: directory %s should contain a folder named 'spam'." % path)
             exit()
-    
-    # # removes punctuation, numerals and capital letters
-    def clean_token(self, s):
-        punctuations = '''!()-[]{};:'"\,<>./?@#$%^&*_~'''
-        newtoken = ""
 
-        for i in range(len(s)):
-            # # remove punctuation and numerals
-            if ((s[i] not in punctuations) and not s[i].isdigit()):
-                newtoken = newtoken + s[i]
-        
-        newtoken = newtoken.lower()
-        return newtoken
+    ##
+    def clean_vocab(self, to):
+        to = to.translate(table)
+        to = to.translate(table1)
+        to = to.lower()
+        if len(to) > 3 : return to
+
 
     def read_messages(self, message_type):
         """
@@ -101,31 +103,123 @@ class Bayespam():
                 for line in f:
                     # Split the string on the space character, resulting in a list of tokens
                     split_line = line.split(" ")
-
                     # Loop through the tokens
                     for idx in range(len(split_line)):
                         token = split_line[idx]
-                        # #print("token:", token) 
 
-                        # # # remove tokens that are less than 4 characters long
-                        if (len(token)<4):
-                            token = token.replace(token, "")
-                        
-                        token = self.clean_token(token)
+                        token = self.clean_vocab(token)
 
-                        if token in self.vocab.keys():
-                            # If the token is already in the vocab, retrieve its counter
-                            counter = self.vocab[token]
-                        else:
-                            # Else: initialize a new counter
-                            counter = Counter()
+                        if token != None:
+                            if token in self.vocab.keys():
+                                # If the token is already in the vocab, retrieve its counter
+                                counter = self.vocab[token]
+                            else:
+                                # Else: initialize a new counter
+                                counter = Counter()
 
-                        # Increment the token's counter by one and store in the vocab
-                        counter.increment_counter(message_type)
-                        self.vocab[token] = counter
+                            # Increment the token's counter by one and store in the vocab
+                            counter.increment_counter(message_type)
+                            self.vocab[token] = counter
             except Exception as e:
                 print("Error while reading message %s: " % msg, e)
                 exit()
+
+    ##
+    def apriori(self):
+        n_messages_regular = len(self.regular_list)  
+        n_messages_spam = len(self.spam_list) 
+        n_messages_total = n_messages_regular + n_messages_spam
+        prob_regular = log(n_messages_regular / n_messages_total)
+        prob_spam = log(n_messages_spam / n_messages_total)
+        return prob_regular, prob_spam
+
+    ##
+    def conditional_word(self):
+        conditional_dict = {}
+        n_words_regular = 0
+        n_words_spam = 0
+        for key in self.vocab:
+            n_words_regular += self.vocab.get(key).counter_regular
+            n_words_spam += self.vocab.get(key).counter_spam
+
+        fallback_prob = log(tuning_var / (n_words_regular + n_words_spam))
+
+        for key in self.vocab:
+            p_array = [0, 0]
+            if (self.vocab.get(key).counter_regular == 0):
+                p_word_given_regular = fallback_prob
+            else:
+                p_word_given_regular = log(self.vocab.get(key).counter_regular / n_words_regular)
+            p_array[0] = p_word_given_regular
+
+            if (self.vocab.get(key).counter_spam == 0):
+                p_word_given_spam = fallback_prob
+            else:
+                p_word_given_spam = log(self.vocab.get(key).counter_spam / n_words_spam)
+            p_array[1] = p_word_given_spam
+            
+            conditional_dict[key] = p_array
+        return conditional_dict
+
+    ##
+    def posterior(self, message_type, apriori_regular, apriori_spam, conditional_dict):
+
+        alpha_regular = 0
+        alpha_spam = 0
+
+        p_regular_given_msg = alpha_regular + apriori_regular
+        p_spam_given_msg = alpha_spam + apriori_spam
+
+        true_regular = 0
+        true_spam = 0
+        false_regular = 0
+        false_spam = 0
+        regular = None
+
+        if message_type == MessageType.REGULAR:
+            message_list = self.regular_list
+            regular = True
+        elif message_type == MessageType.SPAM:
+            message_list = self.spam_list
+            regular = False
+        else:
+            message_list = []
+            print("Error: input parameter message_type should be MessageType.REGULAR or MessageType.SPAM")
+            exit()
+
+        for msg in message_list:
+            try:
+                # Make sure to use latin1 encoding, otherwise it will be unable to read some of the messages
+                f = open(msg, 'r', encoding='latin1')
+
+                # Loop through each line in the message
+                for line in f:
+                    # Split the string on the space character, resulting in a list of tokens
+                    split_line = line.split(" ")
+                    # Loop through the tokens
+                    for idx in range(len(split_line)):
+                        token = split_line[idx]
+
+                        if token in conditional_dict.keys():
+                            p_regular_given_msg += conditional_dict.get(token)[0]
+                            p_spam_given_msg += conditional_dict.get(token)[1]
+
+                if (p_regular_given_msg > p_spam_given_msg and regular == True):
+                    true_regular += 1
+                elif (p_regular_given_msg < p_spam_given_msg and regular == True):
+                    false_spam += 1
+                elif (p_regular_given_msg < p_spam_given_msg and regular == False):
+                    true_spam += 1
+                elif (p_regular_given_msg > p_spam_given_msg and regular == False):
+                    false_regular += 1
+
+
+            except Exception as e:
+                print("Error while reading message %s: " % msg, e)
+                exit()
+        
+        return true_regular, false_regular, true_spam, false_spam
+
 
     def print_vocab(self):
         """
@@ -164,11 +258,6 @@ class Bayespam():
             print("An error occurred while writing the vocab to a file: ", e)
 
 
-def apriori(sublist, totallist):
-    return len(sublist)/len(totallist)
-
-
-
 def main():
     # We require the file paths of the training and test sets as input arguments (in that order)
     # The argparse library helps us cleanly parse input arguments
@@ -191,6 +280,32 @@ def main():
     bayespam.read_messages(MessageType.REGULAR)
     # Parse the messages in the spam message directory
     bayespam.read_messages(MessageType.SPAM)
+
+    ## 
+    apriori_regular, apriori_spam = bayespam.apriori()
+    print('apriorispam, regular: ', apriori_spam, apriori_regular)
+
+    ##
+    conditional_word = bayespam.conditional_word()
+    #print(conditional_word)
+
+    ##
+    test_path = args.test_path
+    bayespam.regular_list = None
+    bayespam.spam_list = None
+    bayespam.list_dirs(test_path)
+
+    confusion_matrix1 = bayespam.posterior(MessageType.REGULAR, apriori_regular, apriori_spam, conditional_word)
+    confusion_matrix2 = bayespam.posterior(MessageType.SPAM, apriori_regular, apriori_spam, conditional_word)
+    confusion_matrix = []
+    for confusion_matrix1, confusion_matrix2 in zip(confusion_matrix1, confusion_matrix2):
+        confusion_matrix.append(confusion_matrix1 + confusion_matrix2)
+    print("confusion_matrix: ", confusion_matrix)
+
+    number_messages = len(bayespam.regular_list) + len(bayespam.spam_list)
+    accuracy = (confusion_matrix[0] + confusion_matrix[2]) / number_messages 
+    print("accuracy: ", accuracy)
+
 
     # bayespam.print_vocab()
     # bayespam.write_vocab("vocab.txt")
