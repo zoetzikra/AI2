@@ -14,6 +14,22 @@ class MessageType(Enum):
     REGULAR = 1,
     SPAM = 2
 
+class Bigram():
+    def __init__(self):
+        self.token1 = None
+        self.token2 = None
+    
+    def __hash__(self):
+        return hash((self.token1, self.token2))
+
+    def __eq__(self, other):
+        return (self.token1, self.token2) == (other.token1, other.token2)
+
+    def __ne__(self, other):
+        # Not strictly necessary, but to avoid having both x==y and x!=y
+        # True at the same time
+        return not(self == other)
+
 class Counter():
 
     def __init__(self):
@@ -75,7 +91,7 @@ class Bayespam():
         to = to.translate(table)
         to = to.translate(table1)
         to = to.lower()
-        if len(to) > 3 : return to
+        if len(to) > 1 : return to
 
 
     def read_messages(self, message_type):
@@ -104,25 +120,34 @@ class Bayespam():
                     # Split the string on the space character, resulting in a list of tokens
                     split_line = line.split(" ")
                     # Loop through the tokens
-                    for idx in range(len(split_line)):
-                        token = split_line[idx]
+                    for idx in range(len(split_line) - 1):
+                        bigram = Bigram()
+                        bigram.token1 = split_line[idx]
+                        bigram.token2 = split_line[idx + 1]
 
-                        token = self.clean_vocab(token)
+                        bigram.token1 = self.clean_vocab(bigram.token1)
+                        bigram.token2 = self.clean_vocab(bigram.token2)
 
-                        if token != None:
-                            if token in self.vocab.keys():
+                        if bigram.token1 != None and bigram.token2 != None:
+                            if bigram in self.vocab.keys():
                                 # If the token is already in the vocab, retrieve its counter
-                                counter = self.vocab[token]
+                                counter = self.vocab[bigram]
                             else:
                                 # Else: initialize a new counter
                                 counter = Counter()
 
                             # Increment the token's counter by one and store in the vocab
                             counter.increment_counter(message_type)
-                            self.vocab[token] = counter
+                            self.vocab[bigram] = counter
             except Exception as e:
                 print("Error while reading message %s: " % msg, e)
                 exit()
+
+    ##
+    def delete_low_frequency_bigrams(self):
+        for bigram in list(self.vocab):
+            if self.vocab.get(bigram).counter_regular < 4 and self.vocab.get(bigram).counter_spam < 4:
+                del self.vocab[bigram]
 
     ##
     def apriori(self):
@@ -142,23 +167,25 @@ class Bayespam():
             n_words_regular += self.vocab.get(bigram).counter_regular
             n_words_spam += self.vocab.get(bigram).counter_spam
 
+        print("regular: ", n_words_regular)
+        print("spam: ", n_words_spam)
         fallback_prob = log(tuning_var / (n_words_regular + n_words_spam))
 
-        for key in self.vocab:
+        for bigram in self.vocab:
             p_array = [0, 0]
-            if (self.vocab.get(key).counter_regular == 0):
+            if (self.vocab.get(bigram).counter_regular == 0):
                 p_word_given_regular = fallback_prob
             else:
-                p_word_given_regular = log(self.vocab.get(key).counter_regular / n_words_regular)
+                p_word_given_regular = log(self.vocab.get(bigram).counter_regular / n_words_regular)
             p_array[0] = p_word_given_regular
 
-            if (self.vocab.get(key).counter_spam == 0):
+            if (self.vocab.get(bigram).counter_spam == 0):
                 p_word_given_spam = fallback_prob
             else:
-                p_word_given_spam = log(self.vocab.get(key).counter_spam / n_words_spam)
+                p_word_given_spam = log(self.vocab.get(bigram).counter_spam / n_words_spam)
             p_array[1] = p_word_given_spam
             
-            conditional_dict[key] = p_array
+            conditional_dict[bigram] = p_array
         return conditional_dict
 
     ##
@@ -197,12 +224,14 @@ class Bayespam():
                     # Split the string on the space character, resulting in a list of tokens
                     split_line = line.split(" ")
                     # Loop through the tokens
-                    for idx in range(len(split_line)):
-                        token = split_line[idx]
+                    for idx in range(len(split_line) - 1):
+                        bigram = Bigram()
+                        bigram.token1 = split_line[idx]
+                        bigram.token2 = split_line[idx + 1]
 
-                        if token in conditional_dict.keys():
-                            p_regular_given_msg += conditional_dict.get(token)[0]
-                            p_spam_given_msg += conditional_dict.get(token)[1]
+                        if bigram in conditional_dict.keys():
+                            p_regular_given_msg += conditional_dict.get(bigram)[0]
+                            p_spam_given_msg += conditional_dict.get(bigram)[1]
 
                 if (p_regular_given_msg > p_spam_given_msg and regular == True):
                     true_regular += 1
@@ -227,9 +256,9 @@ class Bayespam():
 
         :return: None
         """
-        for word, counter in self.vocab.items():
+        for bigram, counter in self.vocab.items():
             # repr(word) makes sure that special characters such as \t (tab) and \n (newline) are printed.
-            print("%s | In regular: %d | In spam: %d" % (repr(word), counter.counter_regular, counter.counter_spam))
+            print("%s | %s | In regular: %d | In spam: %d" % (repr(bigram.token1), repr(bigram.token2), counter.counter_regular, counter.counter_spam))
 
     def write_vocab(self, destination_fp, sort_by_freq=False):
         """
@@ -249,9 +278,9 @@ class Bayespam():
         try:
             f = open(destination_fp, 'w', encoding="latin1")
 
-            for word, counter in vocab.items():
+            for bigram, counter in vocab.items():
                 # repr(word) makes sure that special  characters such as \t (tab) and \n (newline) are printed.
-                f.write("%s | In regular: %d | In spam: %d\n" % (repr(word), counter.counter_regular, counter.counter_spam),)
+                f.write("%s | %s | In regular: %d | In spam: %d\n" % (repr(bigram.token1), repr(bigram.token2), counter.counter_regular, counter.counter_spam),)
 
             f.close()
         except Exception as e:
@@ -281,13 +310,16 @@ def main():
     # Parse the messages in the spam message directory
     bayespam.read_messages(MessageType.SPAM)
 
+    ##
+    bayespam.delete_low_frequency_bigrams()
+
     ## 
     apriori_regular, apriori_spam = bayespam.apriori()
     print('apriorispam, regular: ', apriori_spam, apriori_regular)
 
     ##
     conditional_word = bayespam.conditional_word()
-    #print(conditional_word)
+    # print(conditional_word)
 
     ##
     test_path = args.test_path
@@ -312,7 +344,7 @@ def main():
 
 
     # bayespam.print_vocab()
-    # bayespam.write_vocab("vocab.txt")
+    bayespam.write_vocab("vocab.txt")
 
     print("N regular messages: ", len(bayespam.regular_list))
     print("N spam messages: ", len(bayespam.spam_list))
