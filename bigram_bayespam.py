@@ -14,6 +14,7 @@ class MessageType(Enum):
     REGULAR = 1,
     SPAM = 2
 
+## Bigram class: represent one bigram consisting of two tokens (words)
 class Bigram():
     def __init__(self):
         self.token1 = None
@@ -86,12 +87,12 @@ class Bayespam():
             print("Error: directory %s should contain a folder named 'spam'." % path)
             exit()
 
-    ##
-    def clean_vocab(self, to):
-        to = to.translate(table)
-        to = to.translate(table1)
-        to = to.lower()
-        if len(to) > 1 : return to
+    ## Remove puctation (table), digits (table1), and words with 3 or less letters, change all upper to lower case letters
+    def clean_vocab(self, token):
+        token = token.translate(table)
+        token = token.translate(table1)
+        token = token.lower()
+        if len(token) > 3 : return token
 
 
     def read_messages(self, message_type):
@@ -121,13 +122,16 @@ class Bayespam():
                     split_line = line.split(" ")
                     # Loop through the tokens
                     for idx in range(len(split_line) - 1):
+                        ## create a bigram from two consecutivve tokens
                         bigram = Bigram()
                         bigram.token1 = split_line[idx]
                         bigram.token2 = split_line[idx + 1]
 
+                        ## Remove unwanted characters from the tokens
                         bigram.token1 = self.clean_vocab(bigram.token1)
                         bigram.token2 = self.clean_vocab(bigram.token2)
 
+                        ## Exclude bigrams containing None values and set the according counter 
                         if bigram.token1 != None and bigram.token2 != None:
                             if bigram in self.vocab.keys():
                                 # If the token is already in the vocab, retrieve its counter
@@ -143,13 +147,13 @@ class Bayespam():
                 print("Error while reading message %s: " % msg, e)
                 exit()
 
-    ##
+    ## Remove bigrams that occur less than four times from the dicitonary
     def delete_low_frequency_bigrams(self):
         for bigram in list(self.vocab):
             if self.vocab.get(bigram).counter_regular < 4 and self.vocab.get(bigram).counter_spam < 4:
                 del self.vocab[bigram]
 
-    ##
+    ## Calculate a priori probabilities 
     def apriori(self):
         n_messages_regular = len(self.regular_list)  
         n_messages_spam = len(self.spam_list) 
@@ -158,7 +162,7 @@ class Bayespam():
         prob_spam = log(n_messages_spam / n_messages_total)
         return prob_regular, prob_spam
 
-    ##
+    ## Create a dictionary containing the bigrams' probabilities of occurring given the message type 
     def conditional_word(self):
         conditional_dict = {}
         n_words_regular = 0
@@ -167,10 +171,11 @@ class Bayespam():
             n_words_regular += self.vocab.get(bigram).counter_regular
             n_words_spam += self.vocab.get(bigram).counter_spam
 
-        print("regular: ", n_words_regular)
-        print("spam: ", n_words_spam)
+        ## Create a small valued probability to fall back on when it would otherwise be zero
         fallback_prob = log(tuning_var / (n_words_regular + n_words_spam))
 
+        ## Calculate the probabilites of the words in the dicitonary given the type of message
+        ## Add into a new dictionary
         for bigram in self.vocab:
             p_array = [0, 0]
             if (self.vocab.get(bigram).counter_regular == 0):
@@ -188,12 +193,11 @@ class Bayespam():
             conditional_dict[bigram] = p_array
         return conditional_dict
 
-    ##
+    ## Classify messages to return a confusion matrix for the given message type
     def posterior(self, message_type, apriori_regular, apriori_spam, conditional_dict):
 
         alpha_regular = 0
         alpha_spam = 0
-
         p_regular_given_msg = alpha_regular + apriori_regular
         p_spam_given_msg = alpha_spam + apriori_spam
 
@@ -201,8 +205,9 @@ class Bayespam():
         true_spam = 0
         false_regular = 0
         false_spam = 0
-        regular = None
 
+        ## Set a flag to represent the actual type of the message
+        regular = None
         if message_type == MessageType.REGULAR:
             message_list = self.regular_list
             regular = True
@@ -229,10 +234,14 @@ class Bayespam():
                         bigram.token1 = split_line[idx]
                         bigram.token2 = split_line[idx + 1]
 
+                        ## Sum the conditional probabilites of the words in the messages
+                        ## (bigrams not in the dictionary will be ignored)
                         if bigram in conditional_dict.keys():
                             p_regular_given_msg += conditional_dict.get(bigram)[0]
                             p_spam_given_msg += conditional_dict.get(bigram)[1]
 
+                ## Compare the classification result to the actual type of the message
+                ## Increase the counter accordingly for the confusion matrix
                 if (p_regular_given_msg > p_spam_given_msg and regular == True):
                     true_regular += 1
                 elif (p_regular_given_msg < p_spam_given_msg and regular == True):
@@ -310,23 +319,25 @@ def main():
     # Parse the messages in the spam message directory
     bayespam.read_messages(MessageType.SPAM)
 
-    ##
+    ## Reduce the dictionary to the most common bigrams
     bayespam.delete_low_frequency_bigrams()
 
-    ## 
+    ## Calculate a priori
     apriori_regular, apriori_spam = bayespam.apriori()
     print('apriorispam, regular: ', apriori_spam, apriori_regular)
 
-    ##
+    ## Create a dictionary containing the probabilities of bigrams given the message type
     conditional_word = bayespam.conditional_word()
-    # print(conditional_word)
 
-    ##
+    ## Read the file path of the folder containing the training set form the input arguments
     test_path = args.test_path
+    ## Reset the message lists
     bayespam.regular_list = None
     bayespam.spam_list = None
+    ## Initialize a list of the regular and spam message locations in the test folder
     bayespam.list_dirs(test_path)
 
+    ## Calculate confusion matrices for the two message types and add them into one
     confusion_matrix1 = bayespam.posterior(MessageType.REGULAR, apriori_regular, apriori_spam, conditional_word)
     confusion_matrix2 = bayespam.posterior(MessageType.SPAM, apriori_regular, apriori_spam, conditional_word)
     confusion_matrix = []
@@ -334,6 +345,7 @@ def main():
         confusion_matrix.append(confusion_matrix1 + confusion_matrix2)
     print("confusion_matrix: ", confusion_matrix)
 
+    ## Calculate performance values
     number_messages = len(bayespam.regular_list) + len(bayespam.spam_list)
     accuracy = (confusion_matrix[0] + confusion_matrix[2]) / number_messages
     # sensitivity
@@ -344,7 +356,7 @@ def main():
 
 
     # bayespam.print_vocab()
-    bayespam.write_vocab("vocab.txt")
+    # bayespam.write_vocab("vocab.txt")
 
     print("N regular messages: ", len(bayespam.regular_list))
     print("N spam messages: ", len(bayespam.spam_list))
@@ -359,7 +371,6 @@ def main():
     6) Errors must be computed on the test set (FAR = false accept rate (misses), FRR = false reject rate (false alarms))
     7) Improve the code and the performance (speed, accuracy)
     
-    Use the same steps to create a class BigramBayespam which implements a classifier using a vocabulary consisting of bigrams
     """
 
 if __name__ == "__main__":

@@ -70,7 +70,7 @@ class Bayespam():
             print("Error: directory %s should contain a folder named 'spam'." % path)
             exit()
 
-    ##
+    ## Remove puctation (table), digits (table1), and words with 3 or less letters, change all upper to lower case letters
     def clean_vocab(self, to):
         to = to.translate(table)
         to = to.translate(table1)
@@ -107,8 +107,10 @@ class Bayespam():
                     for idx in range(len(split_line)):
                         token = split_line[idx]
 
+                        ## Remove unwanted characters from the tokens
                         token = self.clean_vocab(token)
 
+                        ## Exclude None-valued words and set the according counter
                         if token != None:
                             if token in self.vocab.keys():
                                 # If the token is already in the vocab, retrieve its counter
@@ -124,7 +126,7 @@ class Bayespam():
                 print("Error while reading message %s: " % msg, e)
                 exit()
 
-    ##
+    ## Calculate a priori probabilities
     def apriori(self):
         n_messages_regular = len(self.regular_list)  
         n_messages_spam = len(self.spam_list) 
@@ -133,17 +135,20 @@ class Bayespam():
         prob_spam = log(n_messages_spam / n_messages_total)
         return prob_regular, prob_spam
 
-    ##
+    ## Create a dictionary containing the words' probabilities of occurring given the message type
     def conditional_word(self):
         conditional_dict = {}
         n_words_regular = 0
         n_words_spam = 0
-        for bigram in self.vocab:
-            n_words_regular += self.vocab.get(bigram).counter_regular
-            n_words_spam += self.vocab.get(bigram).counter_spam
+        for key in self.vocab:
+            n_words_regular += self.vocab.get(key).counter_regular
+            n_words_spam += self.vocab.get(key).counter_spam
 
+        ## Create a small valued probability to fall back on when it would otherwise be zero
         fallback_prob = log(tuning_var / (n_words_regular + n_words_spam))
 
+        ## Calculate the probabilites of the words in the dicitonary given the type of message
+        ## Add into a new dictionary
         for key in self.vocab:
             p_array = [0, 0]
             if (self.vocab.get(key).counter_regular == 0):
@@ -161,7 +166,7 @@ class Bayespam():
             conditional_dict[key] = p_array
         return conditional_dict
 
-    ##
+    ## Classify messages to return a confusion matrix for the given message type
     def posterior(self, message_type, apriori_regular, apriori_spam, conditional_dict):
 
         alpha_regular = 0
@@ -200,10 +205,14 @@ class Bayespam():
                     for idx in range(len(split_line)):
                         token = split_line[idx]
 
+                        ## Sum the conditional probabilites of the words in the messages
+                        ## (words not in the dictionary will be ignored)
                         if token in conditional_dict.keys():
                             p_regular_given_msg += conditional_dict.get(token)[0]
                             p_spam_given_msg += conditional_dict.get(token)[1]
 
+                ## Compare the classification result to the actual type of the message
+                ## Increase the counter accordingly for the confusion matrix
                 if (p_regular_given_msg > p_spam_given_msg and regular == True):
                     true_regular += 1
                 elif (p_regular_given_msg < p_spam_given_msg and regular == True):
@@ -250,7 +259,7 @@ class Bayespam():
             f = open(destination_fp, 'w', encoding="latin1")
 
             for word, counter in vocab.items():
-                # repr(word) makes sure that special  characters such as \t (tab) and \n (newline) are printed.
+                # repr(word) makes sure that special characters such as \t (tab) and \n (newline) are printed.
                 f.write("%s | In regular: %d | In spam: %d\n" % (repr(word), counter.counter_regular, counter.counter_spam),)
 
             f.close()
@@ -281,20 +290,23 @@ def main():
     # Parse the messages in the spam message directory
     bayespam.read_messages(MessageType.SPAM)
 
-    ## 
+    ## Calculate a priori
     apriori_regular, apriori_spam = bayespam.apriori()
     print('apriorispam, regular: ', apriori_spam, apriori_regular)
 
-    ##
+    ## Create a dictionary containing the probabilities of words given the message type
     conditional_word = bayespam.conditional_word()
     #print(conditional_word)
 
-    ##
+    ## Read the file path of the folder containing the training set form the input arguments
     test_path = args.test_path
+    ## Reset the message lists
     bayespam.regular_list = None
     bayespam.spam_list = None
+    ## Initialize a list of the regular and spam message locations in the test folder
     bayespam.list_dirs(test_path)
 
+    ## Calculate confusion matrices for the two message types and add them into one
     confusion_matrix1 = bayespam.posterior(MessageType.REGULAR, apriori_regular, apriori_spam, conditional_word)
     confusion_matrix2 = bayespam.posterior(MessageType.SPAM, apriori_regular, apriori_spam, conditional_word)
     confusion_matrix = []
@@ -302,6 +314,7 @@ def main():
         confusion_matrix.append(confusion_matrix1 + confusion_matrix2)
     print("confusion_matrix: ", confusion_matrix)
 
+    ## Calculate performance values
     number_messages = len(bayespam.regular_list) + len(bayespam.spam_list)
     accuracy = (confusion_matrix[0] + confusion_matrix[2]) / number_messages
     # sensitivity
